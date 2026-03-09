@@ -9,7 +9,7 @@ import requests
 from seleniumbase import SB
 
 # ============================================================
-#  环境变量配置 (严格对接你指定的新变量名)
+#  环境变量配置
 # ============================================================
 ACCOUNTS = []
 if os.environ.get("EML_1") and os.environ.get("PWD_1"):
@@ -21,13 +21,13 @@ TG_TOKEN = os.environ.get("TG_TOKEN")
 TG_ID    = os.environ.get("TG_ID")
 
 if not ACCOUNTS:
-    print("❌ 致命错误：未检测到有效环境变量（EML_1 或 EML_2）")
+    print("❌ 致命错误：环境变量 EML_1/PWD_1 或 EML_2/PWD_2 未配置")
     sys.exit(1)
 
 DYNAMIC_APP_NAME = "未知应用"
 
 # ============================================================
-#  原版核心逻辑 (完全照搬)
+#  原版核心逻辑 (完全照搬原版 justrunmy_renew.py)
 # ============================================================
 _EXPAND_JS = """(function() { var ts = document.querySelector('input[name="cf-turnstile-response"]'); if (!ts) return 'no-turnstile'; var el = ts; for (var i = 0; i < 20; i++) { el = el.parentElement; if (!el) break; var s = window.getComputedStyle(el); if (s.overflow === 'hidden' || s.overflowX === 'hidden' || s.overflowY === 'hidden') el.style.overflow = 'visible'; el.style.minWidth = 'max-content'; } document.querySelectorAll('iframe').forEach(function(f){ if (f.src && f.src.includes('challenges.cloudflare.com')) { f.style.width = '300px'; f.style.height = '65px'; f.style.minWidth = '300px'; f.style.visibility = 'visible'; f.style.opacity = '1'; } }); return 'done'; })()"""
 _SOLVED_JS = """(function(){ var i = document.querySelector('input[name="cf-turnstile-response"]'); return !!(i && i.value && i.value.length > 20); })()"""
@@ -81,14 +81,15 @@ def send_msg(status, timer):
     except: pass
 
 # ============================================================
-#  单次执行函数
+#  单次执行流程 (照搬原版核心步骤)
 # ============================================================
 def run_renewal(sb, acc):
     global DYNAMIC_APP_NAME
     print(f"\n🚀 正在处理: {acc['tag']} ({acc['email']})")
     
+    # 1. 登录
     sb.uc_open_with_reconnect("https://justrunmy.app/id/Account/Login")
-    sb.wait_for_element('input[name="Email"]')
+    sb.wait_for_element('input[name="Email"]', timeout=20)
     safe_js_fill(sb, 'input[name="Email"]', acc['email'])
     safe_js_fill(sb, 'input[name="Password"]', acc['pwd'])
     
@@ -96,37 +97,44 @@ def run_renewal(sb, acc):
     sb.press_keys('input[name="Password"]', '\n')
     time.sleep(5)
 
+    # 2. 进入控制面板
     sb.open("https://justrunmy.app/panel")
-    sb.wait_for_element('h3.font-semibold')
+    # 增加等待时间，防止网络波动导致元素找不到
+    sb.wait_for_element('h3.font-semibold', timeout=30) 
     DYNAMIC_APP_NAME = sb.get_text('h3.font-semibold')
     sb.click('h3.font-semibold')
     time.sleep(3)
     
+    # 3. 点击 Reset
     sb.click('button:contains("Reset Timer")')
     time.sleep(3)
     if sb.execute_script(_EXISTS_JS): handle_turnstile(sb)
     sb.click('button:contains("Just Reset")')
-    time.sleep(8)
+    print("⏳ 等待续期生效...")
+    time.sleep(10)
     
+    # 4. 刷新获取结果
     sb.refresh()
-    time.sleep(4)
+    time.sleep(5)
     res = sb.get_text('span.font-mono.text-xl')
     print(f"✅ {acc['tag']} 成功: {res}")
     send_msg("✅ 续期完成", res)
 
 def main():
     use_proxy = os.environ.get("USE_PROXY", "false").lower() == "true"
-    kwargs = {"uc": True, "test": True, "headless": False}
-    if use_proxy: kwargs["proxy"] = "http://127.0.0.1:8080"
+    # 完全采用原版的 SB 参数
+    sb_kwargs = {"uc": True, "test": True, "headless": False}
+    if use_proxy: sb_kwargs["proxy"] = "http://127.0.0.1:8080"
     
-    with SB(**kwargs) as sb:
+    with SB(**sb_kwargs) as sb:
         for acc in ACCOUNTS:
             try:
                 run_renewal(sb, acc)
-                sb.delete_all_cookies()
+                sb.delete_all_cookies() # 切换账号必须清理
                 time.sleep(2)
             except Exception as e:
                 print(f"❌ {acc['tag']} 异常: {e}")
+                sb.save_screenshot(f"error_{acc['tag']}.png") # 保存出错截图
                 send_msg("❌ 运行失败", str(e)[:30])
 
 if __name__ == "__main__":
