@@ -1,7 +1,9 @@
-name: JustRunMy 自动续期
+name: JustRunMy 自动续期 (无序随机版)
+
 on:
   workflow_dispatch:
   schedule:
+    # 北京时间凌晨 6:00 触发 (UTC 22:00)
     - cron: '0 22 * * *'
 
 jobs:
@@ -11,124 +13,131 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       should_run: ${{ steps.check-schedule.outputs.should_run }}
     steps:
-      - name: 检查执行间隔
+      - name: 📅 检查执行间隔逻辑 (1-2天随机)
         id: check-schedule
         shell: bash
         run: |
           # 获取当前是一年中的第几天 (001-366)
           DOY=$(date +%j)
-          # 使用 10# 前缀强制按十进制解析，防止 008, 009 被误判为八进制
           DOY_NUM=$((10#$DOY))
+          
+          echo "should_run=true" >> $GITHUB_OUTPUT
           
           if [ "${{ github.event_name }}" = "schedule" ]; then
             if [ $((DOY_NUM % 2)) -eq 0 ]; then
-              echo "📅 今天是一年中的第 $DOY_NUM 天（偶数天）。"
-              echo "🛡️ 为防止签到过期，偶数天强制执行任务。"
-              echo "should_run=true" >> $GITHUB_OUTPUT
+              echo "📅 今天是第 $DOY_NUM 天 (偶数天)，触发[强制签到]模式以防过期。"
             else
-              echo "📅 今天是一年中的第 $DOY_NUM 天（奇数天）。"
+              echo "📅 今天是第 $DOY_NUM 天 (奇数天)，进入[随机签到]模式。"
               if [ $(( RANDOM % 2 )) -eq 0 ]; then
-                echo "🎲 随机结果：执行任务。"
-                echo "should_run=true" >> $GITHUB_OUTPUT
+                echo "🎲 随机结果：命中！今日执行。"
               else
-                echo "🎲 随机结果：跳过今日。别担心，明天是偶数天，一定会执行。"
+                echo "🎲 随机结果：跳过。明天是偶数天，必定会执行。"
                 echo "should_run=false" >> $GITHUB_OUTPUT
               fi
             fi
-          else
-            # 手动触发时总是运行
-            echo "should_run=true" >> $GITHUB_OUTPUT
           fi
 
-      - id: set-matrix
+      - name: 🎲 生成随机延迟与无序矩阵
+        id: set-matrix
         if: steps.check-schedule.outputs.should_run == 'true'
         shell: bash
         env:
           ALL_SECRETS: ${{ toJson(secrets) }}
         run: |
-          # 如果是定时触发，增加 0-4 小时的全局随机延迟（精确到秒，最大 14400 秒）
+          # 1. 产生精确到秒的随机延迟 (0-4小时 = 0-14400秒)
           if [ "${{ github.event_name }}" = "schedule" ]; then
             DELAY=$(shuf -i 0-14400 -n 1)
-            HOURS=$(( DELAY / 3600 ))
-            MINUTES=$(( (DELAY % 3600) / 60 ))
-            SECONDS=$(( DELAY % 60 ))
-            echo "⏰ 随机延迟设定：$HOURS 小时 $MINUTES 分 $SECONDS 秒"
-            echo "📢 签到将在延迟结束后开始，预计总耗时不会超过 GitHub 6 小时限制。"
+            H=$(( DELAY / 3600 ))
+            M=$(( (DELAY % 3600) / 60 ))
+            S=$(( DELAY % 60 ))
+            echo "⏰ 随机秒级延迟设定：$H 小时 $M 分 $S 秒"
+            echo "⏳ 正在等待延迟结束..."
             sleep $DELAY
           fi
 
-          # 提取所有以 EML_ 开头的 Secret 的索引数字，并使用 shuf 打乱账号顺序
+          # 2. 提取所有 EML_x 账号索引并打乱顺序 (shuf)
           COUNT=$(echo "$ALL_SECRETS" | jq -r 'keys[] | select(startswith("EML_"))' | sed 's/EML_//' | shuf | jq -R . | jq -s -c .)
+          
           if [ "$COUNT" = "[]" ] || [ -z "$COUNT" ]; then
-            echo "❌ 未检测到任何 EML_x 格式的 Secrets！"
+            echo "❌ 未检测到 EML_x 格式的 Secrets，请检查配置！"
             exit 1
           fi
+          
           echo "matrix=$COUNT" >> $GITHUB_OUTPUT
+          echo "✅ 账号执行顺序已随机打乱: $COUNT"
 
   renew:
     needs: setup
     if: needs.setup.outputs.should_run == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 360 # 严格遵守 GitHub 6 小时限制
     strategy:
-      max-parallel: 1
+      max-parallel: 1 # 账号逐个执行，防止并发冲突
+      fail-fast: false
+      matrix:
+        account_index: ${{ fromJson(needs.setup.outputs.matrix) }}
     
     steps:
-      - name: 下载代码
+      - name: 📥 下载代码
         uses: actions/checkout@v4
 
-      - name: 设置 Python
+      - name: 🐍 设置 Python 环境
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: 启动代理 (sing-box)
+      - name: 🛡️ 启动 sing-box 代理代理
         env:
           PROXY_URL: ${{ secrets.PROXY_URL }}
         run: |
           if [ -z "$PROXY_URL" ]; then
-            echo "未设置 PROXY_URL，将使用直连。"
+            echo "⚠️ 未设置 PROXY_URL，将尝试直连。"
             exit 0
           fi
-          echo "检测到 PROXY_URL，启动 sing-box 代理..."
+          
           SINGBOX_VER="1.11.0"
+          echo "正在安装 sing-box v$SINGBOX_VER..."
           wget -q "https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VER}/sing-box-${SINGBOX_VER}-linux-amd64.tar.gz"
           tar -xzf "sing-box-${SINGBOX_VER}-linux-amd64.tar.gz"
           mv "sing-box-${SINGBOX_VER}-linux-amd64/sing-box" ./sing-box
           chmod +x ./sing-box
+          
+          # 生成配置文件 (调用项目中的解析脚本)
           python proxy_handler.py
+          
+          # 后台运行
           nohup ./sing-box run -c config.json > singbox.log 2>&1 &
-          sleep 3
-          echo "测试本地代理连通性..."
-          PROXY_IP=$(curl -s -x http://127.0.0.1:8080 https://api.ipify.org --connect-timeout 10 || echo "FAILED")
-          echo "代理出口 IP: $PROXY_IP"
-          echo "PROXY_URL=$PROXY_URL" >> $GITHUB_ENV
+          sleep 5
+          
+          echo "🔍 验证代理出口..."
+          export http_proxy=http://127.0.0.1:8080
+          export https_proxy=http://127.0.0.1:8080
+          curl -s --connect-timeout 10 https://api.ipify.org || echo "无法获取出口 IP"
 
-      - name: 安装环境依赖
+      - name: 🛠️ 安装自动化依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb x11-utils xdotool fonts-noto-cjk
           pip install seleniumbase requests
           seleniumbase install chromedriver
 
-      - name: 🚀 运行续期脚本
-
+      - name: 🚀 运行账号 ${{ matrix.account_index }} 续期
         env:
           ACC: ${{ secrets[format('EML_{0}', matrix.account_index)] }}
           ACC_PWD: ${{ secrets[format('PWD_{0}', matrix.account_index)] }}
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_ID: ${{ secrets.TG_ID }}
-          PROXY_URL: ${{ env.PROXY_URL }}
+          PROXY_URL: ${{ secrets.PROXY_URL }}
         run: |
-          echo "--- 账号 ${{ matrix.account_index }} 运行状态 ---"
-          if [ -z "$ACC" ]; then echo "❌ ACC 映射失败"; else echo "✅ ACC 已就绪"; fi
-          if [ -z "$ACC_PWD" ]; then echo "❌ ACC_PWD 映射失败"; else echo "✅ ACC_PWD 已就绪"; fi
-          
+          echo "开始处理账号索引: ${{ matrix.account_index }}"
+          # 启动虚拟显示器并执行脚本
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
             python reset_timer.py
 
-      - name: 上传错误截图
+      - name: 📸 错误截图上传
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: debug-acc-${{ matrix.account_index }}
           path: "*.png"
+          retention-days: 3
