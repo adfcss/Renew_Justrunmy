@@ -39,7 +39,7 @@ def send_tg_message(status_icon, status_text, time_left):
     current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", local_time)
 
     text = (
-        f"{DYNAMIC_APP_NAME}\n"
+        f"{DISPLAY_NAME}\n"
         f"{status_icon} {status_text}\n"
         f"剩余: {time_left}\n"
         f"时间: {current_time_str}"
@@ -301,6 +301,7 @@ def renew(sb) -> bool:
         try:
             sb.wait_for_element('h3.font-semibold', timeout=15)
             DYNAMIC_APP_NAME = sb.get_text('h3.font-semibold')
+            DISPLAY_NAME = f"Justrunmy容器：{DYNAMIC_APP_NAME}"
             print(f"成功抓取到应用名称: {DYNAMIC_APP_NAME}")
             
             sb.click('h3.font-semibold')
