@@ -26,6 +26,7 @@ if not EMAIL or not PASSWORD:
 
 # 全局变量，用于动态保存网页上抓取到的应用名称
 DYNAMIC_APP_NAME = "未知应用"
+DISPLAY_NAME = "JustRunMy 容器" # 添加这一行
 
 # ============================================================
 #  Telegram 推送模块
@@ -285,7 +286,7 @@ def login(sb) -> bool:
     return False
 
 def renew(sb) -> bool:
-    global DYNAMIC_APP_NAME
+    global DYNAMIC_APP_NAME, DISPLAY_NAME
     print("\n" + "="*50)
     print("   开始自动续期流程")
     print("="*50)
